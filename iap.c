@@ -1,6 +1,6 @@
 /** **************************************************************************************
  * @brief stm32f iap 电脑端
- * @note 
+ * @note
  *****************************************************************************************/
 #include <stdio.h>
 #include <stdint.h>
@@ -11,7 +11,7 @@
 #include "./osChoose.h"
 #include "./command.h"
 #ifdef LINUX
-#include <termio.h>
+#include <termios.h>
 #else
 #include <conio.h>
 #endif
@@ -149,7 +149,6 @@ int send_bin(uint8_t command,uint8_t * buff,uint16_t len,uint8_t isanswer)
     uint16_t length;
     length = 5+len;
     uint8_t answer[length];
-    uint8_t sum = 0;
     answer[0] = 0x55;
     if(isanswer)
         answer[1] = command | 0x80;
@@ -224,9 +223,15 @@ int main(int argc,char *argv[])
         close(serial_port);
         return -1;
     }
-    sleep(5);
+    sleep(1);
     //与iap段通信
-    open_serial(argv[2], B115200);
+    for(uint8_t i=0; i<5; i++)
+    {
+        if(open_serial(argv[2], B115200) == 0)
+        {
+            break;
+        }
+    }
     send_bin(master_iniap,NULL,0,0);
     //usleep(100000); // sleep 100 ms
     memset(receive_buff, 0, sizeof(receive_buff));
@@ -249,7 +254,6 @@ int main(int argc,char *argv[])
     *addr = 0x8010000;
     while( (ret = fread(tmp_data + 4, 1, 128, bin)))
     {
-send:
         if( send_bin(master_senddata, tmp_data, ret+4, 0) == -1)
         {
             perror("发送数据错误");
@@ -267,23 +271,7 @@ send:
         }
         receive_p = 0;
         memset(receive_buff, 0, sizeof(receive_buff));
-        for(uint8_t i = 0; i<100; i++)
-        {
-            receive_p =  read(serial_port, receive_buff + receive_p, 6);
-            if(receive_p>=6)
-            {
-                break;
-            }
-            if(i>2)
-            {
-                perror("写flash无回复");
-                //goto send;
-                fclose(bin);
-                close(serial_port);
-                return -1;
-
-            }
-        }
+        read(serial_port, receive_buff + receive_p, 6);
         if(receive_buff[0] == 0x55 && receive_buff[5] == 0xaa)
         {
             switch (receive_buff[3])
@@ -318,7 +306,6 @@ send:
         }
         else
         {
-            goto send;
             perror("回复的包格式错误");
             fclose(bin);
             close(serial_port);
@@ -327,5 +314,35 @@ send:
 
     }
     send_bin(master_jumptoapp, NULL, 0, 0);
+    printf("\nprogram flash completed.\n");
+    printf("jump back to app..\n");
+    fclose(bin);
+    close(serial_port);
+    sleep(1);
+    //与iap段通信
+    for(uint8_t i=0; i<5; i++)
+    {
+        if(open_serial(argv[2], B115200) == 0)
+        {
+            break;
+        }
+    }
+    send_bin(master_isiap,NULL,0,0);
+    //usleep(100000); // sleep 100 ms
+    memset(receive_buff, 0, sizeof(receive_buff));
+    read(serial_port, receive_buff, 6);
+    printf("收到isiap的回复:");
+    for(uint8_t i= 0; i<6; i++)
+    {
+        printf("%.2x ",receive_buff[i]);
+    }
+    if(receive_buff[0] != 0x55 && receive_buff[5] != 0xaa)
+    {
+        perror("app段没有响应");
+        fclose(bin);
+        close(serial_port);
+        return -1;
+    }
+    printf("\nnow is in app.\nplease connect to app com\n");
 }
 #endif
