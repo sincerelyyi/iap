@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdlib.h>
+#include "./setup.h"
 #include "./osChoose.h"
 #include "./command.h"
 #ifdef LINUX
@@ -167,6 +168,86 @@ int send_bin(uint8_t command,uint8_t * buff,uint16_t len,uint8_t isanswer)
 }
 
 /** **************************************************************************************
+  * @brief setup iap
+  * @note
+  * @param
+  * @return
+  * @retval
+  *****************************************************************************************/
+int setup_iap(void)
+{
+#define setup_buff ___f407_iap_build_WL_IO_F407_bin
+#define setup_len ___f407_iap_build_WL_IO_F407_bin_len
+    uint32_t handle_p = 0;
+    uint8_t send_buff[137];
+    uint32_t ret;
+    uint32_t *addr;
+    addr = (uint32_t *)send_buff;
+    *addr = 0x8060000;
+    while( setup_len > handle_p)
+    {
+        ret =  setup_len - handle_p;
+        if(ret>128)
+        {
+            ret = 128;
+        }
+        memcpy(send_buff +4,setup_buff+handle_p,ret);
+        handle_p +=ret;
+        if( send_bin(master_senddata,send_buff, ret+4, 0) == -1)
+        {
+            perror("发送数据错误");
+            close(serial_port);
+            return -1;
+        }
+        for(uint8_t j=0; j<ret/32+((ret%32)?1:0); j++)
+        {
+            printf("\n%.8x: ",*addr+j*32);
+            for(uint8_t i = 0; i<((ret-j*32>=32)?32:(ret-j*32)); i++)
+            {
+                printf("%.2X",send_buff[i+j*32+4]);
+            }
+        }
+        memset(receive_buff, 0, sizeof(receive_buff));
+        read(serial_port, receive_buff, 6);
+        if(receive_buff[0] == 0x55 && receive_buff[5] == 0xaa)
+        {
+            switch (receive_buff[3])
+            {
+            case 0: // 正常写flash结束
+                *addr += ret;
+                break;
+            case 1: // 固件超界
+                perror("固件超界");
+                close(serial_port);
+                return -1;
+                break;
+            case 2: // 写flash错误
+                perror("写flash错误");
+                close(serial_port);
+                return -1;
+                break;
+            case 3: // 擦除扇区错误
+                perror("擦除扇区错误");
+                close(serial_port);
+                return -1;
+                break;
+            default:
+                perror("回复的状态无效");
+                close(serial_port);
+                return -1;
+            }
+        }
+        else
+        {
+            perror("回复的包格式错误");
+            close(serial_port);
+            return -1;
+        }
+
+    }
+    return 0;
+}
+/** **************************************************************************************
  *
  * @brief 主函数
  * @note
@@ -216,12 +297,19 @@ int main(int argc,char *argv[])
         close(serial_port);
         serial_port = 0;
     }
-    else
+    else //如果没有iap段，安装一个
     {
-        perror("没有iap段");
-        fclose(bin);
+        if(setup_iap())
+        {
+            perror("安装iap段出错");
+            close(serial_port);
+            return -1;
+        }
+        printf("\n安装iap段成功\n");
+        printf("\n正在跳转到iap\n");
+        send_bin(master_jumptoiap, NULL, 0, 0);
         close(serial_port);
-        return -1;
+        serial_port = 0;
     }
     sleep(1);
     //与iap段通信
