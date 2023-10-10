@@ -2,6 +2,7 @@
  * @brief stm32f iap 电脑端
  * @note
  *****************************************************************************************/
+//#define LINUX
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -9,22 +10,28 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include "./setup.h"
-#include "./osChoose.h"
 #include "./command.h"
 #ifdef LINUX
 #include <termios.h>
 #else
-#include <conio.h>
+#include "./serialport.h"
 #endif
 
-#ifdef LINUX
 uint8_t receive_buff[1000] = {0};
 uint16_t receive_p = 0;
-int serial_port = 0;
+#ifdef LINUX
+#define read_serial(a, b, c) read(a,b,c)
+#define close_serial(a) close(a)
+int serial_port;
+#else
+#define read_serial(a, b, c) readFromSerialPort(a, b, c)
+#define close_serial(a) closeSerialPort(a)
+HANDLE serial_port;
+#endif
 int open_serial(const char *port,uint32_t baud)
 {
+#ifdef LINUX
     serial_port = open(port, O_RDWR|O_NOCTTY); // 打开串口设备文件
-
     if (serial_port < 0) {
         perror("无法打开串口");
         return -1;
@@ -34,7 +41,7 @@ int open_serial(const char *port,uint32_t baud)
     // 获取串口属性
     //  if (tcgetattr(serial_port, &tty) != 0) {
     //      perror("获取串口属性失败");
-    //      close(serial_port);
+    //      close_serial(serial_port);
     //      return -1;
     // }
 
@@ -119,6 +126,9 @@ int open_serial(const char *port,uint32_t baud)
         return -1;
     }
     tcflush(serial_port, TCIOFLUSH);
+#else
+	serial_port = openSerialPort(port,baud,one,off);
+#endif  
     return 0;
 }
 /** **************************************************************************************
@@ -160,13 +170,18 @@ int send_bin(uint8_t command,uint8_t * buff,uint16_t len,uint8_t isanswer)
     answer[sizeof(answer)-2] =0;
     answer[sizeof(answer)-1] = 0xaa;
     answer[sizeof(answer)-2] = 0-checksum(answer,sizeof(answer));     //赋值checksum位
+#ifdef LINUX
     if(write(serial_port, answer, sizeof(answer)) !=(ssize_t) sizeof(answer))
     {
         return -1;
     }
-
+#else
+	if(writeToSerialPort(serial_port,answer,sizeof(answer)) != sizeof(answer))
+    {
+        return -1;
+    }
+#endif
 }
-
 /** **************************************************************************************
   * @brief setup iap
   * @note
@@ -196,7 +211,7 @@ int setup_iap(void)
         if( send_bin(master_senddata,send_buff, ret+4, 0) == -1)
         {
             perror("发送数据错误");
-            close(serial_port);
+            close_serial(serial_port);
             return -1;
         }
         for(uint8_t j=0; j<ret/32+((ret%32)?1:0); j++)
@@ -208,7 +223,7 @@ int setup_iap(void)
             }
         }
         memset(receive_buff, 0, sizeof(receive_buff));
-        read(serial_port, receive_buff, 6);
+        read_serial(serial_port, receive_buff, 6);
         if(receive_buff[0] == 0x55 && receive_buff[5] == 0xaa)
         {
             switch (receive_buff[3])
@@ -218,29 +233,29 @@ int setup_iap(void)
                 break;
             case 1: // 固件超界
                 perror("固件超界");
-                close(serial_port);
+                close_serial(serial_port);
                 return -1;
                 break;
             case 2: // 写flash错误
                 perror("写flash错误");
-                close(serial_port);
+                close_serial(serial_port);
                 return -1;
                 break;
             case 3: // 擦除扇区错误
                 perror("擦除扇区错误");
-                close(serial_port);
+                close_serial(serial_port);
                 return -1;
                 break;
             default:
                 perror("回复的状态无效");
-                close(serial_port);
+                close_serial(serial_port);
                 return -1;
             }
         }
         else
         {
             perror("回复的包格式错误");
-            close(serial_port);
+            close_serial(serial_port);
             return -1;
         }
 
@@ -283,7 +298,7 @@ int main(int argc,char *argv[])
     open_serial(argv[2], B115200);
     send_bin(master_isiap,NULL,0,0);
     //usleep(100000); // sleep 100 ms
-    read(serial_port, receive_buff, 6);
+    read_serial(serial_port, receive_buff, 6);
     printf("收到有iap段的回复:");
     for(uint8_t i= 0; i<6; i++)
     {
@@ -294,7 +309,7 @@ int main(int argc,char *argv[])
         //收到有iap段的回复
         printf("\n正在跳转到iap\n");
         send_bin(master_jumptoiap, NULL, 0, 0);
-        close(serial_port);
+        close_serial(serial_port);
         serial_port = 0;
     }
     else //如果没有iap段，安装一个
@@ -302,13 +317,13 @@ int main(int argc,char *argv[])
         if(setup_iap())
         {
             perror("安装iap段出错");
-            close(serial_port);
+            close_serial(serial_port);
             return -1;
         }
         printf("\n安装iap段成功\n");
         printf("\n正在跳转到iap\n");
         send_bin(master_jumptoiap, NULL, 0, 0);
-        close(serial_port);
+        close_serial(serial_port);
         serial_port = 0;
     }
     sleep(1);
@@ -323,7 +338,7 @@ int main(int argc,char *argv[])
     send_bin(master_iniap,NULL,0,0);
     //usleep(100000); // sleep 100 ms
     memset(receive_buff, 0, sizeof(receive_buff));
-    read(serial_port, receive_buff, 5);
+    read_serial(serial_port, receive_buff, 5);
     printf("收到iniap的回复:");
     for(uint8_t i= 0; i<5; i++)
     {
@@ -333,7 +348,7 @@ int main(int argc,char *argv[])
     {
         perror("iap段没有响应");
         fclose(bin);
-        close(serial_port);
+        close_serial(serial_port);
         return -1;
     }
     // program flash
@@ -346,7 +361,7 @@ int main(int argc,char *argv[])
         {
             perror("发送数据错误");
             fclose(bin);
-            close(serial_port);
+            close_serial(serial_port);
             return -1;
         }
         for(uint8_t j=0; j<ret/32+((ret%32)?1:0); j++)
@@ -359,7 +374,7 @@ int main(int argc,char *argv[])
         }
         receive_p = 0;
         memset(receive_buff, 0, sizeof(receive_buff));
-        read(serial_port, receive_buff + receive_p, 6);
+        read_serial(serial_port, receive_buff + receive_p, 6);
         if(receive_buff[0] == 0x55 && receive_buff[5] == 0xaa)
         {
             switch (receive_buff[3])
@@ -370,25 +385,25 @@ int main(int argc,char *argv[])
             case 1: // 固件超界
                 perror("固件超界");
                 fclose(bin);
-                close(serial_port);
+                close_serial(serial_port);
                 return -1;
                 break;
             case 2: // 写flash错误
                 perror("写flash错误");
                 fclose(bin);
-                close(serial_port);
+                close_serial(serial_port);
                 return -1;
                 break;
             case 3: // 擦除扇区错误
                 perror("擦除扇区错误");
                 fclose(bin);
-                close(serial_port);
+                close_serial(serial_port);
                 return -1;
                 break;
             default:
                 perror("回复的状态无效");
                 fclose(bin);
-                close(serial_port);
+                close_serial(serial_port);
                 return -1;
             }
         }
@@ -396,7 +411,7 @@ int main(int argc,char *argv[])
         {
             perror("回复的包格式错误");
             fclose(bin);
-            close(serial_port);
+            close_serial(serial_port);
             return -1;
         }
 
@@ -405,7 +420,7 @@ int main(int argc,char *argv[])
     printf("\nprogram flash completed.\n");
     printf("jump back to app..\n");
     fclose(bin);
-    close(serial_port);
+    close_serial(serial_port);
     sleep(1);
     //与iap段通信
     for(uint8_t i=0; i<5; i++)
@@ -418,7 +433,7 @@ int main(int argc,char *argv[])
     send_bin(master_isiap,NULL,0,0);
     //usleep(100000); // sleep 100 ms
     memset(receive_buff, 0, sizeof(receive_buff));
-    read(serial_port, receive_buff, 6);
+    read_serial(serial_port, receive_buff, 6);
     printf("收到isiap的回复:");
     for(uint8_t i= 0; i<6; i++)
     {
@@ -428,9 +443,8 @@ int main(int argc,char *argv[])
     {
         perror("app段没有响应");
         fclose(bin);
-        close(serial_port);
+        close_serial(serial_port);
         return -1;
     }
     printf("\nnow is in app.\nplease connect to app com\n");
 }
-#endif
