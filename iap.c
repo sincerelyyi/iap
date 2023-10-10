@@ -2,7 +2,7 @@
  * @brief stm32f iap 电脑端
  * @note
  *****************************************************************************************/
-#define LINUX
+//#define LINUX
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
