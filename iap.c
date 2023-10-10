@@ -2,7 +2,7 @@
  * @brief stm32f iap 电脑端
  * @note
  *****************************************************************************************/
-//#define LINUX
+#define LINUX
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -199,6 +199,7 @@ int setup_iap(void)
     uint32_t *addr;
     addr = (uint32_t *)send_buff;
     *addr = 0x8060000;
+    printf("setupping iap...\n");
     while( setup_len > handle_p)
     {
         ret =  setup_len - handle_p;
@@ -296,6 +297,16 @@ int main(int argc,char *argv[])
     printf("open file success.\n");
     //与主函数通信，准备切换到iap段
     open_serial(argv[2], B115200);
+    if(argc >=4 && strcmp(argv[3],"-f")==0)
+    {
+        if(setup_iap())
+        {
+            perror("setup iap error");
+            close_serial(serial_port);
+            return -1;
+        }
+        printf("\nsetup iap success\n");
+    }
     send_bin(master_isiap,NULL,0,0);
     //usleep(100000); // sleep 100 ms
     read_serial(serial_port, receive_buff, 6);
