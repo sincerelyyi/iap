@@ -210,7 +210,7 @@ int setup_iap(void)
         handle_p +=ret;
         if( send_bin(master_senddata,send_buff, ret+4, 0) == -1)
         {
-            perror("发送数据错误");
+            perror("send data error");
             close_serial(serial_port);
             return -1;
         }
@@ -232,29 +232,29 @@ int setup_iap(void)
                 *addr += ret;
                 break;
             case 1: // 固件超界
-                perror("固件超界");
+                perror("soldware override");
                 close_serial(serial_port);
                 return -1;
                 break;
             case 2: // 写flash错误
-                perror("写flash错误");
+                perror("program flash error");
                 close_serial(serial_port);
                 return -1;
                 break;
             case 3: // 擦除扇区错误
-                perror("擦除扇区错误");
+                perror("erase sector error");
                 close_serial(serial_port);
                 return -1;
                 break;
             default:
-                perror("回复的状态无效");
+                perror("reply unkown");
                 close_serial(serial_port);
                 return -1;
             }
         }
         else
         {
-            perror("回复的包格式错误");
+            perror("reply formate error");
             close_serial(serial_port);
             return -1;
         }
@@ -290,16 +290,16 @@ int main(int argc,char *argv[])
     FILE *bin = fopen(argv[1], "rb");
     if (!bin)
     {
-        perror("打开文件失败");
+        perror("open file fail");
         return EXIT_FAILURE;
     }
-    printf("打开文件成功.\n");
+    printf("open file success.\n");
     //与主函数通信，准备切换到iap段
     open_serial(argv[2], B115200);
     send_bin(master_isiap,NULL,0,0);
     //usleep(100000); // sleep 100 ms
     read_serial(serial_port, receive_buff, 6);
-    printf("收到有iap段的回复:");
+    printf("has iap:");
     for(uint8_t i= 0; i<6; i++)
     {
         printf("%.2x ",receive_buff[i]);
@@ -307,7 +307,7 @@ int main(int argc,char *argv[])
     if(receive_buff[0] == 0x55 && receive_buff[5] == 0xaa  && receive_buff[3] == 1)
     {
         //收到有iap段的回复
-        printf("\n正在跳转到iap\n");
+        printf("\njump to iap\n");
         send_bin(master_jumptoiap, NULL, 0, 0);
         close_serial(serial_port);
         serial_port = 0;
@@ -316,12 +316,12 @@ int main(int argc,char *argv[])
     {
         if(setup_iap())
         {
-            perror("安装iap段出错");
+            perror("setup iap error");
             close_serial(serial_port);
             return -1;
         }
-        printf("\n安装iap段成功\n");
-        printf("\n正在跳转到iap\n");
+        printf("\nsetup iap success\n");
+        printf("\njump to iap\n");
         send_bin(master_jumptoiap, NULL, 0, 0);
         close_serial(serial_port);
         serial_port = 0;
@@ -339,27 +339,27 @@ int main(int argc,char *argv[])
     //usleep(100000); // sleep 100 ms
     memset(receive_buff, 0, sizeof(receive_buff));
     read_serial(serial_port, receive_buff, 5);
-    printf("收到iniap的回复:");
+    printf("iap reply:");
     for(uint8_t i= 0; i<5; i++)
     {
         printf("%.2x ",receive_buff[i]);
     }
     if(receive_buff[0] != 0x55 && receive_buff[4] != 0xaa)
     {
-        perror("iap段没有响应");
+        perror("iap no action");
         fclose(bin);
         close_serial(serial_port);
         return -1;
     }
     // program flash
-    printf("\n准备烧写flash\n");
+    printf("\nprogramming flash\n");
     addr = (uint32_t *)tmp_data;
     *addr = 0x8010000;
     while( (ret = fread(tmp_data + 4, 1, 128, bin)))
     {
         if( send_bin(master_senddata, tmp_data, ret+4, 0) == -1)
         {
-            perror("发送数据错误");
+            perror("send data error");
             fclose(bin);
             close_serial(serial_port);
             return -1;
@@ -383,25 +383,25 @@ int main(int argc,char *argv[])
                 *addr += ret;
                 break;
             case 1: // 固件超界
-                perror("固件超界");
+                perror("soldware override");
                 fclose(bin);
                 close_serial(serial_port);
                 return -1;
                 break;
             case 2: // 写flash错误
-                perror("写flash错误");
+                perror("program flash error");
                 fclose(bin);
                 close_serial(serial_port);
                 return -1;
                 break;
             case 3: // 擦除扇区错误
-                perror("擦除扇区错误");
+                perror("erase sector error");
                 fclose(bin);
                 close_serial(serial_port);
                 return -1;
                 break;
             default:
-                perror("回复的状态无效");
+                perror("reply unknow");
                 fclose(bin);
                 close_serial(serial_port);
                 return -1;
@@ -409,7 +409,11 @@ int main(int argc,char *argv[])
         }
         else
         {
-            perror("回复的包格式错误");
+            perror("reply format error");
+	    for(uint8_t i=0; i< 6;i++)
+	    {
+		printf("%.2x ",receive_buff[i]);    
+	    }
             fclose(bin);
             close_serial(serial_port);
             return -1;
@@ -434,14 +438,14 @@ int main(int argc,char *argv[])
     //usleep(100000); // sleep 100 ms
     memset(receive_buff, 0, sizeof(receive_buff));
     read_serial(serial_port, receive_buff, 6);
-    printf("收到isiap的回复:");
+    printf("app reply:");
     for(uint8_t i= 0; i<6; i++)
     {
         printf("%.2x ",receive_buff[i]);
     }
     if(receive_buff[0] != 0x55 && receive_buff[5] != 0xaa)
     {
-        perror("app段没有响应");
+        perror("app no action");
         fclose(bin);
         close_serial(serial_port);
         return -1;
