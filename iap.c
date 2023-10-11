@@ -186,7 +186,7 @@ int send_bin(uint8_t command,uint8_t * buff,uint16_t len,uint8_t isanswer)
 #else
     if(writeToSerialPort(serial_port,answer,sizeof(answer)) != sizeof(answer))
     {
-        return SEND_ERROR; 
+        return SEND_ERROR;
     }
 #endif
 }
@@ -317,13 +317,6 @@ int main(int argc,char *argv[])
         printf("      -f: force install iap to mcu\n");
         return TOO_LESS_ARG;
     }
-    else
-    {
-        for(uint8_t i = 0; i< argc; i++)
-        {
-            printf("%d:%s\n",i,argv[i]);
-        }
-    }
     FILE *bin = fopen(argv[1], "rb");
     if (!bin)
     {
@@ -336,55 +329,76 @@ int main(int argc,char *argv[])
         return UNVALID_BIN;
     }
     printf("open file success.\n");
-    //与主函数通信，准备切换到iap段
     open_serial(argv[2], B115200);
-    if(argc >=4 && strcmp(argv[3],"-f")==0) // 强制安装iap段
-    {
-        Try_times = 0;
-        do
-        {
-            return_num = setup_iap();
-            Try_times ++;
-            if(Try_times > TRY_MAX)
-            {
-                perror("setup iap error");
-                close_serial(serial_port);
-                return return_num;
-            }
-        }
-        while(return_num);
-        printf("\nsetup iap success\n");
-    }
     send_bin(master_isiap,NULL,0,0);
-    //usleep(100000); // sleep 100 ms
     read_serial(serial_port, receive_buff, 6);
-    printf("has iap:");
+    printf("isiap:");
     for(uint8_t i= 0; i<6; i++)
     {
         printf("%.2x ",receive_buff[i]);
     }
-    if(receive_buff[0] == 0x55 && receive_buff[5] == 0xaa  && receive_buff[3] == 0)//如果没有iap段，安装一个
+    printf("\n");
+    if(receive_buff[0] == 0x55 && receive_buff[5] == 0xaa)
     {
-        Try_times = 0;
-        do
+        switch (receive_buff[3])
         {
-            return_num = setup_iap();
-            Try_times ++;
-            if(Try_times > TRY_MAX)
+        case 0:                     // 在app段，但没有检测到iap
+            // 安装iap段到mcu
+            Try_times = 0;
+            do
             {
-                perror("setup iap error");
-                close_serial(serial_port);
-                return return_num;
+                return_num = setup_iap();
+                Try_times ++;
+                if(Try_times > TRY_MAX)
+                {
+                    perror("setup iap error");
+                    close_serial(serial_port);
+                    return return_num;
+                }
             }
+            while(return_num);
+            printf("\nsetup iap success\n");
+            printf("\njump to iap\n");
+            send_bin(master_jumptoiap, NULL, 0, 0);
+            close_serial(serial_port);
+            serial_port = 0;
+            sleep(1);
+            break;
+        case 1:                     // 在app段，检测到iap
+            if(argc >=4 && strcmp(argv[3],"-f")==0) // 强制安装iap段
+            {
+                Try_times = 0;
+                do
+                {
+                    return_num = setup_iap();
+                    Try_times ++;
+                    if(Try_times > TRY_MAX)
+                    {
+                        perror("setup iap error");
+                        close_serial(serial_port);
+                        return return_num;
+                    }
+                }
+                while(return_num);
+                printf("\nsetup iap success\n");
+            }
+            printf("\njump to iap\n");
+            send_bin(master_jumptoiap, NULL, 0, 0);
+            close_serial(serial_port);
+            serial_port = 0;
+            sleep(1);
+            break;
+        case 2:                     // 在iap段
+            break;
+        default:
+            ;
         }
-        while(return_num);
-        printf("\nsetup iap success\n");
     }
-    printf("\njump to iap\n");
-    send_bin(master_jumptoiap, NULL, 0, 0);
-    close_serial(serial_port);
-    serial_port = 0;
-    sleep(1);
+    else
+    {
+        perror("app no action");
+        return APP_NO_ACTION;
+    }
     //与iap段通信
     for(uint8_t i=0; i<5; i++)
     {
@@ -393,16 +407,16 @@ int main(int argc,char *argv[])
             break;
         }
     }
-    send_bin(master_iniap,NULL,0,0);
-    //usleep(100000); // sleep 100 ms
+    send_bin(master_isiap,NULL,0,0);
     memset(receive_buff, 0, sizeof(receive_buff));
-    read_serial(serial_port, receive_buff, 5);
-    printf("iap reply:");
-    for(uint8_t i= 0; i<5; i++)
+    read_serial(serial_port, receive_buff, 6);
+    printf("isiap:");
+    for(uint8_t i= 0; i<6; i++)
     {
         printf("%.2x ",receive_buff[i]);
     }
-    if(receive_buff[0] != 0x55 && receive_buff[4] != 0xaa)
+    printf("\n");
+    if(receive_buff[0] != 0x55 || receive_buff[5] != 0xaa)
     {
         perror("iap no action");
         fclose(bin);
