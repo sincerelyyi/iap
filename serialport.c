@@ -69,11 +69,11 @@ HANDLE openSerialPort(LPCSTR portname,enum Baudrate baudrate, enum Stopbits stop
 		 ErrorExit("SetCommState");
 	}
 	COMMTIMEOUTS timeouts={0};
-	timeouts.ReadIntervalTimeout=20000;
-	timeouts.ReadTotalTimeoutConstant=20000;
-	timeouts.ReadTotalTimeoutMultiplier=20000;
-	timeouts.WriteTotalTimeoutConstant=2000;
-	timeouts.WriteTotalTimeoutMultiplier=2000;
+	timeouts.ReadIntervalTimeout=200;
+	timeouts.ReadTotalTimeoutConstant=200;
+	timeouts.ReadTotalTimeoutMultiplier=200;
+	timeouts.WriteTotalTimeoutConstant=200;
+	timeouts.WriteTotalTimeoutMultiplier=200;
 	if(!SetCommTimeouts(hSerial, &timeouts)){
 		ErrorExit("SetCommTimeouts");
 	}
