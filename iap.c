@@ -2,7 +2,7 @@
  * @brief stm32f iap 电脑端
  * @note
  *****************************************************************************************/
-#define LINUX
+//#define LINUX
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include "./setup.h"
 #include "./command.h"
+#include "./return_num.h"
 #ifdef LINUX
 #include <termios.h>
 #else
@@ -37,7 +38,7 @@ int open_serial(const char *port,uint32_t baud)
     serial_port = open(port, O_RDWR|O_NOCTTY); // 打开串口设备文件
     if (serial_port < 0) {
         perror("无法打开串口");
-        return -1;
+        return NO_SERIAL_PORT;
     }
 
     struct termios tty;
@@ -45,7 +46,7 @@ int open_serial(const char *port,uint32_t baud)
     //  if (tcgetattr(serial_port, &tty) != 0) {
     //      perror("获取串口属性失败");
     //      close_serial(serial_port);
-    //      return -1;
+    //      return NO_SERIAL_PORT;
     // }
 
 
@@ -126,13 +127,17 @@ int open_serial(const char *port,uint32_t baud)
 
     if (tcsetattr(serial_port, TCSANOW, &tty) != 0) {
         perror("设置串口属性失败");
-        return -1;
+        return SET_SERIAL_ERROR;
     }
     tcflush(serial_port, TCIOFLUSH);
 #else
     serial_port = openSerialPort(port,baud,one,off);
+    if(serial_port == INVALID_HANDLE_VALUE)
+    {
+        return NO_SERIAL_PORT;
+    }
 #endif
-    return 0;
+    return SUCCESS;
 }
 /** **************************************************************************************
   * @brief checksum
@@ -176,12 +181,12 @@ int send_bin(uint8_t command,uint8_t * buff,uint16_t len,uint8_t isanswer)
 #ifdef LINUX
     if(write(serial_port, answer, sizeof(answer)) !=(ssize_t) sizeof(answer))
     {
-        return -1;
+        return SEND_ERROR;
     }
 #else
     if(writeToSerialPort(serial_port,answer,sizeof(answer)) != sizeof(answer))
     {
-        return -1;
+        return SEND_ERROR; 
     }
 #endif
 }
@@ -212,10 +217,10 @@ int setup_iap(void)
         }
         memcpy(send_buff +4,setup_buff+handle_p,ret);
         handle_p +=ret;
-        if( send_bin(master_senddata,send_buff, ret+4, 0) == -1)
+        if( send_bin(master_senddata,send_buff, ret+4, 0) == SEND_ERROR)
         {
             perror("send data error");
-            return -1;
+            return SEND_ERROR;
         }
         for(uint8_t j=0; j<ret/32+((ret%32)?1:0); j++)
         {
@@ -235,33 +240,59 @@ int setup_iap(void)
                 *addr += ret;
                 break;
             case 1: // 固件超界
-                perror("soldware override");
-                return -1;
+                perror("soldware out of range");
+                return SOLDWARE_OUTOFRANGE ;
                 break;
             case 2: // 写flash错误
                 perror("program flash error");
-                return -1;
+                return PROGRAM_FLASH_ERROR;
                 break;
             case 3: // 擦除扇区错误
                 perror("erase sector error");
-                return -1;
+                return ERASE_SECTOR_ERROR;
                 break;
             default:
                 perror("reply unkown");
-                return -1;
+                return ERASE_SECTOR_ERROR;
             }
         }
         else
         {
             perror("reply formate error");
-            return -1;
+            return REPLY_FORMATE_ERROR;
         }
 
     }
-    return 0;
+    return SUCCESS;
+}
+
+/** **************************************************************************************
+ * @brief is_valid_bin 判断是否有效的bin文件
+ * @note
+ * @param {*}
+ * @return {*}
+ * @retval
+ *****************************************************************************************/
+int is_valid_bin(FILE *bin)
+{
+    uint32_t heap = 0;
+    uint32_t reset = 0;
+    fseek(bin, 0, SEEK_SET);
+    fread(&heap,4,1,bin);
+    fread(&reset,4,1,bin);
+    printf("heap=%.8x reset=%.8x\n", heap,reset);
+    fseek(bin, 0, SEEK_SET);
+    if(heap> 0x20020000 || heap < 0x20000000) // heap 不在内存地址段
+    {
+        return UNVALID_BIN;
+    }
+    if(reset > 0x8060000 || reset < 0x8010000) // reset 不在iap地址段
+    {
+        return UNVALID_BIN;
+    }
+    return  SUCCESS;
 }
 /** **************************************************************************************
- *
  * @brief 主函数
  * @note
  * @param {*}
@@ -273,10 +304,18 @@ int main(int argc,char *argv[])
     uint8_t tmp_data[128+4];
     uint32_t *addr = 0;
     size_t ret;
+    int return_num;
+    printf("\n         fangli iap program\n\n");
     if(argc < 3)
     {
-        perror("too less arg");
-        return 0;
+        printf("usage:\n");
+#ifdef LINUX
+        printf("      iap <xx.bin> </dev/ttyUSBx> [-f]\n");
+#else
+        printf("      iap.exe <xx.bin> <comx> [-f]\n");
+#endif
+        printf("      -f: force install iap to mcu\n");
+        return TOO_LESS_ARG;
     }
     else
     {
@@ -289,24 +328,31 @@ int main(int argc,char *argv[])
     if (!bin)
     {
         perror("open file fail");
-        return EXIT_FAILURE;
+        return OPEN_FILE_ERROR;
+    }
+    if(is_valid_bin(bin))
+    {
+        perror("unvalid bin file");
+        return UNVALID_BIN;
     }
     printf("open file success.\n");
     //与主函数通信，准备切换到iap段
     open_serial(argv[2], B115200);
-    if(argc >=4 && strcmp(argv[3],"-f")==0)
+    if(argc >=4 && strcmp(argv[3],"-f")==0) // 强制安装iap段
     {
         Try_times = 0;
-        while(setup_iap())
+        do
         {
+            return_num = setup_iap();
             Try_times ++;
-            if(Try_times >= TRY_MAX)
+            if(Try_times > TRY_MAX)
             {
                 perror("setup iap error");
                 close_serial(serial_port);
-                return -1;
+                return return_num;
             }
         }
+        while(return_num);
         printf("\nsetup iap success\n");
     }
     send_bin(master_isiap,NULL,0,0);
@@ -317,28 +363,27 @@ int main(int argc,char *argv[])
     {
         printf("%.2x ",receive_buff[i]);
     }
-    if(receive_buff[0] == 0x55 && receive_buff[5] == 0xaa  && receive_buff[3] == 1)
+    if(receive_buff[0] == 0x55 && receive_buff[5] == 0xaa  && receive_buff[3] == 0)//如果没有iap段，安装一个
     {
-        //收到有iap段的回复
-        printf("\njump to iap\n");
-        send_bin(master_jumptoiap, NULL, 0, 0);
-        close_serial(serial_port);
-        serial_port = 0;
-    }
-    else //如果没有iap段，安装一个
-    {
-        if(setup_iap())
+        Try_times = 0;
+        do
         {
-            perror("setup iap error");
-            close_serial(serial_port);
-            return -1;
+            return_num = setup_iap();
+            Try_times ++;
+            if(Try_times > TRY_MAX)
+            {
+                perror("setup iap error");
+                close_serial(serial_port);
+                return return_num;
+            }
         }
+        while(return_num);
         printf("\nsetup iap success\n");
-        printf("\njump to iap\n");
-        send_bin(master_jumptoiap, NULL, 0, 0);
-        close_serial(serial_port);
-        serial_port = 0;
     }
+    printf("\njump to iap\n");
+    send_bin(master_jumptoiap, NULL, 0, 0);
+    close_serial(serial_port);
+    serial_port = 0;
     sleep(1);
     //与iap段通信
     for(uint8_t i=0; i<5; i++)
@@ -362,7 +407,7 @@ int main(int argc,char *argv[])
         perror("iap no action");
         fclose(bin);
         close_serial(serial_port);
-        return -1;
+        return IAP_NO_ACTION;
     }
     // program flash
     printf("\nprogramming flash\n");
@@ -378,7 +423,7 @@ program_again:
             perror("send data error");
             fclose(bin);
             close_serial(serial_port);
-            return -1;
+            return SEND_ERROR;
         }
         for(uint8_t j=0; j<ret/32+((ret%32)?1:0); j++)
         {
@@ -399,28 +444,28 @@ program_again:
                 *addr += ret;
                 break;
             case 1: // 固件超界
-                perror("soldware override");
+                perror("soldware out of range");
                 fclose(bin);
                 close_serial(serial_port);
-                return -1;
+                return SOLDWARE_OUTOFRANGE;
                 break;
             case 2: // 写flash错误
                 perror("program flash error");
                 fclose(bin);
                 close_serial(serial_port);
-                return -1;
+                return PROGRAM_FLASH_ERROR;
                 break;
             case 3: // 擦除扇区错误
                 perror("erase sector error");
                 fclose(bin);
                 close_serial(serial_port);
-                return -1;
+                return ERASE_SECTOR_ERROR;
                 break;
             default:
                 perror("reply unknow");
                 fclose(bin);
                 close_serial(serial_port);
-                return -1;
+                return REPLY_UNKNOW;
             }
         }
         else
@@ -438,7 +483,7 @@ program_again:
             }
             fclose(bin);
             close_serial(serial_port);
-            return -1;
+            return REPLY_FORMATE_ERROR;
         }
 
     }
@@ -470,7 +515,7 @@ program_again:
         perror("app no action");
         fclose(bin);
         close_serial(serial_port);
-        return -1;
+        return APP_NO_ACTION;
     }
     printf("\nnow is in app.\nplease connect to app com\n");
 }
