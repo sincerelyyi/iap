@@ -2,7 +2,7 @@
  * @brief stm32f iap 电脑端
  * @note
  *****************************************************************************************/
-//#define LINUX
+#define LINUX
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -17,8 +17,11 @@
 #include "./serialport.h"
 #endif
 
+#define TRY_MAX  3
 uint8_t receive_buff[1000] = {0};
 uint16_t receive_p = 0;
+uint8_t Try_times = 0;
+
 #ifdef LINUX
 #define read_serial(a, b, c) read(a,b,c)
 #define close_serial(a) close(a)
@@ -127,8 +130,8 @@ int open_serial(const char *port,uint32_t baud)
     }
     tcflush(serial_port, TCIOFLUSH);
 #else
-	serial_port = openSerialPort(port,baud,one,off);
-#endif  
+    serial_port = openSerialPort(port,baud,one,off);
+#endif
     return 0;
 }
 /** **************************************************************************************
@@ -176,7 +179,7 @@ int send_bin(uint8_t command,uint8_t * buff,uint16_t len,uint8_t isanswer)
         return -1;
     }
 #else
-	if(writeToSerialPort(serial_port,answer,sizeof(answer)) != sizeof(answer))
+    if(writeToSerialPort(serial_port,answer,sizeof(answer)) != sizeof(answer))
     {
         return -1;
     }
@@ -212,7 +215,6 @@ int setup_iap(void)
         if( send_bin(master_senddata,send_buff, ret+4, 0) == -1)
         {
             perror("send data error");
-            close_serial(serial_port);
             return -1;
         }
         for(uint8_t j=0; j<ret/32+((ret%32)?1:0); j++)
@@ -234,29 +236,24 @@ int setup_iap(void)
                 break;
             case 1: // 固件超界
                 perror("soldware override");
-                close_serial(serial_port);
                 return -1;
                 break;
             case 2: // 写flash错误
                 perror("program flash error");
-                close_serial(serial_port);
                 return -1;
                 break;
             case 3: // 擦除扇区错误
                 perror("erase sector error");
-                close_serial(serial_port);
                 return -1;
                 break;
             default:
                 perror("reply unkown");
-                close_serial(serial_port);
                 return -1;
             }
         }
         else
         {
             perror("reply formate error");
-            close_serial(serial_port);
             return -1;
         }
 
@@ -299,11 +296,16 @@ int main(int argc,char *argv[])
     open_serial(argv[2], B115200);
     if(argc >=4 && strcmp(argv[3],"-f")==0)
     {
-        if(setup_iap())
+        Try_times = 0;
+        while(setup_iap())
         {
-            perror("setup iap error");
-            close_serial(serial_port);
-            return -1;
+            Try_times ++;
+            if(Try_times >= TRY_MAX)
+            {
+                perror("setup iap error");
+                close_serial(serial_port);
+                return -1;
+            }
         }
         printf("\nsetup iap success\n");
     }
@@ -365,7 +367,10 @@ int main(int argc,char *argv[])
     // program flash
     printf("\nprogramming flash\n");
     addr = (uint32_t *)tmp_data;
+    Try_times = 0;
+program_again:
     *addr = 0x8010000;
+    fseek(bin, 0, SEEK_SET);
     while( (ret = fread(tmp_data + 4, 1, 128, bin)))
     {
         if( send_bin(master_senddata, tmp_data, ret+4, 0) == -1)
@@ -420,11 +425,17 @@ int main(int argc,char *argv[])
         }
         else
         {
+
+            Try_times ++;
+            if(Try_times < TRY_MAX)
+            {
+                goto program_again;
+            }
             perror("reply format error");
-	    for(uint8_t i=0; i< 6;i++)
-	    {
-		printf("%.2x ",receive_buff[i]);    
-	    }
+            for(uint8_t i=0; i< 6; i++)
+            {
+                printf("%.2x ",receive_buff[i]);
+            }
             fclose(bin);
             close_serial(serial_port);
             return -1;
